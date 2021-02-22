@@ -1,117 +1,217 @@
-const express =require('express')
-const db =require(__dirname+'/__connect_db')
-const moment =require('moment-timezone')
+const express = require('express');
+const moment = require('moment-timezone');
+const multer = require('multer');
+const upload = multer({dest: 'tmp_uploads/'});
+
+const db =require(__dirname + '/../_connect_db');
 const router = express.Router();
 
-router.use((req,res,next)=>{
-    res.locals.title='列表-通訊錄'
-    next();
-})
+const dateFormat = "YYYY-MM-DD";
 
-router.get('/add',(req,res)=>{
-    res.locals.title='新增資料-通訊錄'
-    res.render('address-book/add');
-})
-//新增
-router.post('/add',(req,res)=>{
-    const sql = "INSERT INTO `address_book`(`name`, `email`, `mobile`, `birthday`, `address`, `created_at`)VALUES" +"(?, ?, ?, ?, ?, NOW())";
-db.query(sql,[
-    req.body.name,
-    req.body.email,
-    req.body.mobile,
-    req.body.birthday,
-    req.body.address
-],(error,results)=>{
-   
-    if(error){
-        console.log(error);
-        output.error=error
-    }
-    else{
-        output.success=true;
-        output.results=results;
-    }
-    res.json(output)
-})
-    
-})
 
-//列表
-router.get('/list/:page?',(req,res)=>{
-    res.locals.title='列表-通訊錄'
-    const perpage =5;
-    let totalRows =0;
-    let totalPages=0;
-    let page =req.params.page?parseInt(req.params.page):1;
-    const t_sql = "SELECT COUNT(1) num FROM address_book";
-    db.query(t_sql,(error,results)=>{
-        totalRows = results[0].num;
-        totalPages =Math.ceil(totalRows/perpage)
-        if(page<1){
-            res.redirect('/address-book/list/1')
-            return
-        }
-        if(page>totalPages){
-            res.redirect('/address-book/list/'+totalPages)
-            return
-        }
-        const sql=`SELECT * FROM address_book  LIMIT ${(page-1)*perpage},${perpage}`;
-    
-        db.query(sql, (error, result, fields)=>{
-            const fm ='YYYY-MM-DD';
-            result.forEach(element => {
-                element.birthday = moment(element.birthday).format(fm)
-            });
-            res.render('address-book/list',{
-                perpage:perpage,
-                page:page,
-                totalRows:totalRows,
-                totalPages:totalPages,
-                row:result
-            })
+
+router.get('/insert', (req, res)=>{
+    res.render('address-book/insert');
+});
+router.post('/insert', upload.none(), (req, res)=>{
+    const email_pattern = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,6}(?:\.[a-z]{2})?)$/i;
+
+    const output = {
+        success: false,
+        error: '',
+        status: 0,
+        body: req.body,
+        result: {}
+    };
+
+    if(!req.body.name || req.body.name.length<2){
+        output.error = '請填寫正確的姓名';
+        output.status = 410;
+        return res.json(output);
+    }
+
+    if(!req.body.email || !email_pattern.test(req.body.email)){
+        output.error = '請填寫合法的 email';
+        output.status = 420;
+        return res.json(output);
+    }
+
+    if(!req.body.birthday || ! /^\d{4}-\d{1,2}-\d{1,2}/.test(req.body.birthday)){
+        output.error = '請填寫合法的生日';
+        output.status = 430;
+        return res.json(output);
+    }
+
+    // TODO: 檢查各必填欄位的格式或值
+
+
+    const sql = `INSERT INTO \`address_book\`(\`name\`, \`email\`, \`mobile\`, \`birthday\`, \`address\`, \`created_at\`) 
+VALUES (?, ?, ?, ?, ?, NOW())`;
+
+    db.queryAsync(sql , [
+        req.body.name,
+        req.body.email,
+        req.body.mobile,
+        req.body.birthday,
+        req.body.address,
+    ])
+        .then(r=>{
+            output.result = r;
+            output.success = true;
+            console.log('result:', r);
+            return res.json(output);
         })
-    })
-})
+        .catch(error=>{
+            console.log(error);
+            return res.json(output);
+        })
 
-//刪除
-router.get('del/:sid',(req,res)=>{
-    const sql = "DELETE FROM `address_book` WHERE `sid` = ?";
-    db.query(sql,[req.params.sid],(error,results)=>{
-        // console.log('del',results);
-        res.redirect(req.header('Referer'))
-    })
-})
+});
+router.post('/del/:sid', (req, res)=>{
+    const sql = "DELETE FROM `address_book` WHERE `sid`=?";
+    db.queryAsync(sql, [req.params.sid])
+        .then(r=>{
+            console.log(r);
+            res.json(r);
+        })
+});
 
-//修改
-router.get('edit/:sid',(req,res)=>{
-    const sql = "SELECT * FROM `address_book` WHERE `sid` = ?";
-    db.query(sql,[req.params.sid],(error,results)=>{
-        if(results && results.length===1){
-            results[0].birthday=moment(results[0].birthday).format('YYYY-MM-DD');
-            res.render('address-book/edit',{row:results[0]});
-        }
-        else{
-            return res.redirect('/address-book/list');
-        }
-    })
-})
-router.post('edit/:sid',(req,res)=>{
+router.get('/edit/:sid', (req, res)=>{
+    const sql = "SELECT * FROM address_book WHERE sid=?";
+    db.queryAsync(sql, [req.params.sid])
+        .then(result=>{
+            if(! result || !result.length){
+                res.redirect(req.baseUrl);
+            } else {
+                result[0].birthday = moment(result[0].birthday).format(dateFormat);
+                res.render('address-book/edit', {row: result[0]});
+            }
+        })
+        .catch(error=>{
+            res.redirect(req.baseUrl);
+        })
+    //res.render('address-book/edit');
+});
 
-})
-//一次新增多筆資料
-router.get('/fake',(req,res)=>{
-    return res.send('off')
-    const sql = "INSERT INTO `address_book`(`name`, `email`, `mobile`, `birthday`, `address`, `created_at`)VALUES" +"(?, ?, ?, ?, ?, NOW())";
-for(let i=0;i<100;i++){
-    let email = new Date().getTime().toString(16)+Math.floor(Math.random*1000)+"gmail.com"
+router.post('/edit/:sid', upload.none(), (req, res)=> {
+    const email_pattern = /^([\w-]+(?:\.[\w-]+)*)@((?:[\w-]+\.)*\w[\w-]{0,66})\.([a-z]{2,6}(?:\.[a-z]{2})?)$/i;
 
-    db.query(sql,[
-    'chris',
-    email,
-    '0963620472',
-    '1997-05-11',
-    '彰化市'
-])}
-res.json('ok')
-})
-module.exports=router
+    const output = {
+        success: false,
+        error: '',
+        status: 0,
+        body: req.body,
+        result: {}
+    };
+
+    if(!req.body.name || req.body.name.length<2){
+        output.error = '請填寫正確的姓名';
+        output.status = 410;
+        return res.json(output);
+    }
+
+    if(!req.body.email || !email_pattern.test(req.body.email)){
+        output.error = '請填寫合法的 email';
+        output.status = 420;
+        return res.json(output);
+    }
+
+    if(!req.body.birthday || ! /^\d{4}-\d{1,2}-\d{1,2}/.test(req.body.birthday)){
+        output.error = '請填寫合法的生日';
+        output.status = 430;
+        return res.json(output);
+    }
+
+    const sql = `UPDATE \`address_book\` SET \`name\`=?,\`email\`=?,\`mobile\`=?,\`birthday\`=?,\`address\`=? WHERE sid=?`;
+    db.queryAsync(sql , [
+        req.body.name,
+        req.body.email,
+        req.body.mobile,
+        req.body.birthday,
+        req.body.address,
+        req.params.sid
+    ])
+        .then(r=>{
+            output.result = r;
+            output.success = true;
+            console.log('result:', r);
+            return res.json(output);
+        })
+        .catch(error=>{
+            console.log(error);
+            return res.json(output);
+        })
+
+});
+
+router.get('/list-api/:page?', (req, res)=>{
+    const perPage = 5;
+    let totalRows, totalPages;
+    let page = req.params.page ? parseInt(req.params.page) : 1;
+
+    const t_sql = "SELECT COUNT(1) num FROM `address_book`";
+    db.queryAsync(t_sql)
+        .then(result=>{
+            totalRows = result[0].num; // 總筆數
+            totalPages = Math.ceil(totalRows/perPage);
+
+            // 限定 page 範圍
+            if(page<1) page=1;
+            if(page>totalPages) page=totalPages;
+
+            const sql = `SELECT * FROM \`address_book\` ORDER BY sid DESC LIMIT  ${(page-1)*perPage}, ${perPage}`;
+
+            return db.queryAsync(sql);
+        })
+        .then(result=>{
+            result.forEach((row, idx)=>{
+                row.birthday = moment(row.birthday).format(dateFormat);
+            });
+
+            res.json({
+                totalRows,
+                totalPages,
+                page,
+                rows: result
+            });
+
+        })
+});
+
+router.get('/:page?', (req, res)=>{
+    const perPage = 5;
+    let totalRows, totalPages;
+    let page = req.params.page ? parseInt(req.params.page) : 1;
+
+    const t_sql = "SELECT COUNT(1) num FROM `address_book`";
+    db.queryAsync(t_sql)
+        .then(result=>{
+            totalRows = result[0].num; // 總筆數
+            totalPages = Math.ceil(totalRows/perPage);
+
+            // 限定 page 範圍
+            if(page<1) page=1;
+            if(page>totalPages) page=totalPages;
+
+            const sql = `SELECT * FROM \`address_book\` ORDER BY sid DESC LIMIT  ${(page-1)*perPage}, ${perPage}`;
+
+            return db.queryAsync(sql);
+        })
+        .then(result=>{
+            result.forEach((row, idx)=>{
+                row.birthday = moment(row.birthday).format(dateFormat);
+            });
+
+            res.render('address-book/list', {
+                totalRows,
+                totalPages,
+                page,
+                rows: result
+            });
+
+        })
+});
+
+
+
+module.exports = router;
